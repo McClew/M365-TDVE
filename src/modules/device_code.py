@@ -66,7 +66,7 @@ class DeviceCodeModule(TelemetryModule):
                         "elapsed_ms": poll.elapsed_ms,
                     })
 
-                    if poll.error != "authorisation_pending":
+                    if poll.error != "authorization_pending":
                         break
         else:
             result.notes.append(

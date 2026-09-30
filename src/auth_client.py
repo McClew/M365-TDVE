@@ -52,7 +52,7 @@ class AuthClient:
 
     @property
     def authorise_url(self) -> str:
-        return f"{self.authority}/oauth2/v2.0/authorise"
+        return f"{self.authority}/oauth2/v2.0/authorize"
 
     # Core POST with 429/timeout handling
     def _post_form(self, url: str, data: dict[str, str]) -> OAuthResponse:
