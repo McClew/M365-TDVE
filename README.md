@@ -23,6 +23,94 @@ python -m pip install -r requirements.txt
 
 Requires Python 3.10+ and only `requests` + `pyyaml` (NFR-2; runs on Windows, macOS, Linux).
 
+## Prerequisite: Entra app registration
+
+Every OAuth call the engine makes (ROPC, device code, and the consent URL)
+sends a `client_id`, and there is no built-in default. You need to register a
+**public client** app in the test tenant before you run anything. Using an app
+you own also means the telemetry is tied to an app you control.
+
+### 1. Register the app
+
+1. Sign in to the [Microsoft Entra admin centre](https://entra.microsoft.com)
+   as an admin of the **test** tenant.
+2. Go to **Identity → App registrations → New registration**.
+3. Set:
+   - **Name:** `M365 TDVE` (or anything that's easy to spot in the audit logs)
+   - **Supported account types:** *Accounts in this organisational directory only (Single tenant)*
+   - **Redirect URI:** leave blank for now (you'll add it in step 2)
+4. Click **Register**. From the **Overview** page, copy the
+   **Application (client) ID** and the **Directory (tenant) ID**.
+
+### 2. Configure authentication
+
+On the app's **Authentication** blade:
+
+1. **Add a platform → Mobile and desktop applications**. Leave the suggested
+   redirect URI checkboxes unticked.
+   Type `http://localhost:8400/callback` into the custom redirect URI box
+   underneath them (placeholder text: `e.g. myapp://auth`), then click
+   **Configure**. This must match `client.redirect_uri` in your config
+   exactly.
+2. Open the **Settings** tab (next to the redirect URI
+   configuration tab) and switch **Allow public client flows** on.
+
+   Without this, ROPC (`auth_failure`, `mfa_prompt`) and device code
+   (`device_code`) fail with `AADSTS7000218`.
+3. Click **Save**.
+
+Don't create a client secret or certificate. The engine is a public client.
+
+### 3. Configure API permissions
+
+On the **API permissions** blade:
+
+1. Make sure **Microsoft Graph → Delegated → `User.Read`** is present. It's
+   added by default. The `device_code` and `mfa_prompt` modules request
+   `https://graph.microsoft.com/.default`, which only resolves to permissions
+   configured on the app, so at least one must be there.
+2. **Don't** add or grant admin consent for `Mail.ReadWrite` or
+   `Files.ReadWrite.All`. The `consent_url` module exists so that *you*
+   consent to these scopes yourself, which generates the
+   *Policy Event – OAuth App Consented* telemetry. If consent has already been
+   granted, you may not get that event.
+
+### 4. Prepare the test accounts
+
+- Use **cloud-only** test users. ROPC doesn't work for federated or
+  passwordless-only accounts.
+- **Security Defaults / Conditional Access:** these can block ROPC outright.
+  That's fine for `auth_failure`, which only needs failed sign-ins. For
+  `mfa_prompt`, the account must be MFA-registered and in a state where it gets
+  an MFA challenge (`AADSTS50076` / `AADSTS50079`) rather than a hard block.
+  If needed, scope a Conditional Access exclusion to the TDVE app and the test
+  users only.
+- Don't run this against real users' accounts.
+
+### 5. Reference configuration
+
+| Setting | Value |
+| --- | --- |
+| Supported account types | Single tenant |
+| Platform | Mobile and desktop applications |
+| Redirect URI | `http://localhost:8400/callback` |
+| Allow public client flows | Yes |
+| Client secret / certificate | None |
+| API permissions | Microsoft Graph (Delegated): `User.Read` |
+| Admin consent | Not granted for the extended scopes |
+
+Put the IDs from step 1 into `config/config.yaml`:
+
+```yaml
+tenant:
+  id: "<Directory (tenant) ID>"
+client:
+  client_id: "<Application (client) ID>"
+  redirect_uri: "http://localhost:8400/callback"
+```
+
+You can also pass `--client-id` on the command line to override the config.
+
 ## Configure
 
 ```bash
@@ -33,7 +121,8 @@ cp config/config.example.yaml config/config.yaml
 Then, in `config/config.yaml`:
 
 - Declare the tenant via `tenant.id` (GUID) **or** `tenant.domain`.
-- Provide a public-client `client_id` from an app registration in that tenant.
+- Provide the `client_id` from the app registration you created in
+  [Prerequisite: Entra app registration](#prerequisite-entra-app-registration).
 
 Supply any valid test-account password via the `M365TDVE_TEST_PASSWORD`
 environment variable rather than the config file:
