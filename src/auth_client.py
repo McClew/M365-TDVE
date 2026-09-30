@@ -155,3 +155,30 @@ class AuthClient:
             "client_id": client_id,
             "device_code": device_code,
         })
+
+    def graph_get(self, url: str, access_token: str) -> OAuthResponse:
+        """Authenticated GET against a resource (e.g. Graph /me).
+
+        Used to prove a device-code session is live by exercising the issued
+        token. The token is sent in the Authorization header only; it is never
+        logged. Reuses the structured OAuthResponse shape for consistency.
+        """
+
+        start = time.monotonic()
+        try:
+            resp = self.session.get(
+                url,
+                headers={"Authorization": f"Bearer {access_token}"},
+                timeout=self.timeout,
+            )
+        except requests.exceptions.Timeout:
+            elapsed = int((time.monotonic() - start) * 1000)
+            self.log.warning("Timeout calling %s", url)
+            return OAuthResponse(url, None, None, "timeout", "Request timed out", elapsed)
+        except requests.exceptions.RequestException as exc:
+            elapsed = int((time.monotonic() - start) * 1000)
+            self.log.error("Network error calling %s: %s", url, exc)
+            return OAuthResponse(url, None, None, "network_error", str(exc), elapsed)
+
+        elapsed = int((time.monotonic() - start) * 1000)
+        return self._to_response(url, resp, elapsed)

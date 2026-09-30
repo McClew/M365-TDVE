@@ -1,3 +1,7 @@
 # M365 Telemetry & Detection Validation Engine - runtime dependencies
 requests>=2.28.0
 pyyaml>=6.0
+
+# Optional: only required for device_code completion_mode: auto
+# After installing, fetch the browser binary: python -m playwright install chromium
+# playwright>=1.40.0

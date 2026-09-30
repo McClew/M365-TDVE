@@ -36,9 +36,28 @@ modules:
 
   device_code:
     scope: "https://graph.microsoft.com/.default offline_access"
-    poll: false                 # if true, poll /token to show authorisation_pending
+    # completion_mode controls how far the device-code flow is taken:
+    #   none   -> initiate + (optionally) poll to show authorization_pending.
+    #             No sign-in occurs. (default; safe)
+    #   manual -> print the code + URL, then poll until a HUMAN completes the
+    #             sign-in on a second device using a TEST account.
+    #   auto   -> drive a browser (Playwright) to complete the sign-in as the
+    #             declared TEST account, then poll to collect the token.
+    # manual/auto produce a real successful sign-in + live session in YOUR test
+    # tenant - use them to demo the technique and to test the automated
+    # "Revoke Active Sessions" response.
+    completion_mode: none
+    # --- none mode ---
+    poll: true                 # if true, poll /token to show authorization_pending
     poll_seconds: 5
     max_polls: 3
+    # --- manual / auto mode ---
+    timeout_seconds: 300       # max time to wait for the sign-in to complete
+    verify_session: true       # after success, call Graph /me to prove it is live
+    # --- auto mode only ---
+    complete_as: "detection.test@example.onmicrosoft.com"  # which TEST account signs in (needs a password)
+    headful: true              # show the browser window (recommended for live demos)
+    nav_timeout_ms: 30000
 
   mfa_prompt:
     scope: "https://graph.microsoft.com/.default offline_access"
