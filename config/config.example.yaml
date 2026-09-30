@@ -1,0 +1,59 @@
+# ==============================================================================
+# M365 Telemetry & Detection Validation Engine - example configuration
+# ------------------------------------------------------------------------------
+# Copy this file to config/config.yaml and fill in YOUR OWN TEST TENANT details.
+# ==============================================================================
+
+tenant:
+  # Entra Tenant ID (GUID) OR the primary domain (example.onmicrosoft.com).
+  # One of these is required.
+  id: ""              # e.g. 00000000-0000-0000-0000-000000000000
+  domain: ""          # e.g. example.onmicrosoft.com
+
+client:
+  # Public client (application) ID used for the OAuth flows. Use an app
+  # registration in YOUR test tenant that permits public-client flows.
+  client_id: ""
+  # Redirect URI registered for the consent-URL / auth-code flows.
+  redirect_uri: "http://localhost:8400/callback"
+
+# Test accounts that live in the test tenant. These are the ONLY identities the
+# engine will target.
+targets:
+  users:
+    - upn: "detection.test@example.onmicrosoft.com"
+      # Optional: valid password for flows that need a real primary auth
+      # (e.g. MFA-prompt telemetry). Leave blank for failure-only telemetry.
+      # Prefer supplying this via the M365TDVE_TEST_PASSWORD env var instead.
+      password: ""
+
+# Per-module tuning. All rates are conservative by default.
+modules:
+  auth_failure:
+    attempts: 5                 # number of deliberately-failed sign-ins
+    invalid_password: "TDVE-Invalid-Telemetry-000!"  # a password known to be wrong
+    delay_seconds: 3            # spacing between calls (rate limiting)
+
+  device_code:
+    scope: "https://graph.microsoft.com/.default offline_access"
+    poll: false                 # if true, poll /token to show authorisation_pending
+    poll_seconds: 5
+    max_polls: 3
+
+  mfa_prompt:
+    scope: "https://graph.microsoft.com/.default offline_access"
+    prompts: 3                  # number of repeated primary-auth challenges
+    delay_seconds: 20           # spacing between prompts
+
+  consent_url:
+    # Extended scopes to embed in the generated /authorise URL for consent
+    # logging validation. You consent to these yourself in the test tenant.
+    scopes:
+      - "Mail.ReadWrite"
+      - "Files.ReadWrite.All"
+      - "offline_access"
+    state: "tdve-consent-validation"
+
+output:
+  log_file: "validation_run.log"
+  summary_json: "validation_summary.json"

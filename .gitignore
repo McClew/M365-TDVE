@@ -1,0 +1,15 @@
+# Secrets & local config - never commit real tenant/credential data
+config/config.yaml
+config/config.json
+
+# Runtime artifacts
+validation_run.log
+validation_summary.json
+*.log
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/
