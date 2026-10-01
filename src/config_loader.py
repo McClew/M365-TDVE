@@ -47,9 +47,10 @@ class AuthConfig:
     browser); the issued token is cached and shared across every module in the
     run.
     """
-    delegated_flow: str = "ropc"   # ropc | device_code
+    delegated_flow: str = "ropc"   # ropc | device_code | auth_code
     scope: str = "https://graph.microsoft.com/.default offline_access"
     device_code_timeout: int = 300
+    auth_code_timeout: int = 300
 
 @dataclass
 class EngineConfig:
@@ -170,15 +171,18 @@ def load_config(path: str | Path, cli_overrides: dict[str, Any] | None = None) -
     auth = AuthConfig()
     flow = (cli_overrides.get("delegated_auth")
             or a.get("delegated_flow") or auth.delegated_flow).strip().lower()
-    if flow not in ("ropc", "device_code"):
+    if flow not in ("ropc", "device_code", "auth_code"):
         raise ConfigError(
-            f"auth.delegated_flow must be 'ropc' or 'device_code', got {flow!r}"
+            "auth.delegated_flow must be 'ropc', 'device_code' or 'auth_code', "
+            f"got {flow!r}"
         )
     auth.delegated_flow = flow
     if a.get("scope"):
         auth.scope = str(a["scope"]).strip()
     if a.get("device_code_timeout"):
         auth.device_code_timeout = int(a["device_code_timeout"])
+    if a.get("auth_code_timeout"):
+        auth.auth_code_timeout = int(a["auth_code_timeout"])
 
     # Training / detection-reference settings.
     t = data.get("training") or {}

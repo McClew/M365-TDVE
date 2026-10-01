@@ -9,6 +9,17 @@
 # Because the account has MFA, the primary credential exchange is expected to be
 # followed by an interrupt (e.g. AADSTS50076/50079/50074) rather than a token -
 # that interrupt is the telemetry we are validating.
+#
+# Optional approval leg (``succeed_after_prompts: true``): after the prompt
+# burst, reproduce the "fatigue payoff" - one MFA-satisfied sign-in that yields a
+# token. ROPC can't satisfy MFA (no token), and a device-code sign-in would emit
+# the WRONG signal (a device-code sign-in alert, not a successful MFA event), so
+# this uses the INTERACTIVE authorization-code flow: the operator signs in and
+# approves the MFA prompt, producing a genuine successful, MFA-satisfied logon.
+# On success the delegated session is seeded onto the shared client so a chained
+# run pivots straight into the post-breach modules as the now-compromised
+# account. It prompts at most once per run (a session already seeded earlier in
+# the chain is reused). Off by default.
 
 from __future__ import annotations
 
@@ -87,7 +98,44 @@ class MfaPromptModule(TelemetryModule):
                     time.sleep(delay)
 
             result.artifacts["observed_error_codes"] = sorted(observed_codes)
+
+            if self.settings.get("succeed_after_prompts", False):
+                self._run_approval_leg(user, result)
+
             result.duration_seconds = round(time.monotonic() - start, 3)
             results.append(result)
 
         return results
+
+    def _run_approval_leg(self, user, result: ModuleResult) -> None:
+        """Reproduce the fatigue payoff: one interactive MFA-satisfied sign-in.
+
+        Uses the authorization-code flow (not ROPC, which can't satisfy MFA, and
+        not device code, which emits the wrong signal): the operator completes
+        the sign-in and APPROVES the MFA prompt - a genuine successful,
+        MFA-satisfied logon - and the resulting delegated session is seeded for
+        chained post-breach modules. Reuses a session already seeded earlier in
+        the run. Records the outcome on ``result``; never raises.
+        """
+        try:
+            self._auth_code_token(user.upn)
+        except Exception as exc:  # noqa: BLE001 - record, don't abort the batch
+            result.artifacts["approved_auth"] = False
+            result.notes.append(
+                f"approval leg did not complete ({exc}); no session seeded."
+            )
+            self.log.warning(
+                "mfa_prompt: approval leg failed for %s: %s", user.upn, exc
+            )
+            return
+
+        result.artifacts["approved_auth"] = True
+        result.calls.append({"phase": "approval", "flow": "auth_code",
+                             "status": "token_issued"})
+        result.notes.append(
+            "MFA approval completed (fatigue payoff) via interactive sign-in; "
+            "delegated session seeded for chained post-breach modules."
+        )
+        self.log.info(
+            "  approval leg OK for %s; session seeded for the chain.", user.upn
+        )

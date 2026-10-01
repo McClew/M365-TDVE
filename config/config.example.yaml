@@ -23,11 +23,19 @@ auth:
   #                satisfy MFA: protected accounts fail with AADSTS50076.
   # device_code -> ONE interactive sign-in (complete MFA in a browser); the
   #                issued token is cached and shared across every module in the
-  #                run. Use this when your test accounts enforce MFA.
-  # Override per-run with --delegated-auth {ropc,device_code}.
+  #                run. Use this when your test accounts enforce MFA. NB: this
+  #                emits a DEVICE-CODE sign-in signal (its own detection).
+  # auth_code   -> ONE interactive browser sign-in via the authorization-code
+  #                flow (PKCE, loopback redirect). Also handles MFA, but yields an
+  #                ORDINARY interactive sign-in signature - use this to represent
+  #                a normal successful (MFA-satisfied) logon, e.g. mfa_prompt's
+  #                approval leg. Requires client.redirect_uri to be registered on
+  #                the app.
+  # Override per-run with --delegated-auth {ropc,device_code,auth_code}.
   delegated_flow: ropc
   scope: "https://graph.microsoft.com/.default offline_access"
-  device_code_timeout: 300     # max seconds to wait for the interactive sign-in
+  device_code_timeout: 300     # max seconds to wait for the device-code sign-in
+  auth_code_timeout: 300       # max seconds to wait for the auth-code sign-in
 
 # Test accounts that live in the test tenant. These are the ONLY identities the
 # engine will target.
@@ -57,6 +65,14 @@ modules:
     attempts: 5                 # number of deliberately-failed sign-ins
     invalid_password: "TDVE-Invalid-Telemetry-000!"  # a password known to be wrong
     delay_seconds: 3            # spacing between calls (rate limiting)
+    # succeed_after_failures: after the failed attempts, do ONE sign-in with the
+    # account's VALID password. This reproduces the alertable "failures then
+    # success" pattern (a spray that worked) instead of failures alone, and on
+    # success seeds the delegated session so a chained run pivots into the
+    # post-breach modules as this account. Needs a valid password (targets.users
+    # / M365TDVE_TEST_PASSWORD) AND an account WITHOUT MFA (ROPC can't satisfy
+    # MFA). Default: false.
+    succeed_after_failures: false
 
   device_code:
     scope: "https://graph.microsoft.com/.default offline_access"
@@ -87,6 +103,13 @@ modules:
     scope: "https://graph.microsoft.com/.default offline_access"
     prompts: 3                  # number of repeated primary-auth challenges
     delay_seconds: 20           # spacing between prompts
+    # succeed_after_prompts: after the burst, reproduce the "fatigue payoff" - one
+    # MFA-satisfied sign-in that yields a token, and seed that session for chained
+    # post-breach modules. This uses the INTERACTIVE authorization-code flow (the
+    # operator signs in and approves the MFA prompt within auth.auth_code_timeout)
+    # so it emits a genuine successful-MFA signal, not a device-code one. Prompts
+    # at most once per run. Default: false.
+    succeed_after_prompts: false
 
   consent_url:
     # Extended scopes to embed in the generated /authorise URL for consent

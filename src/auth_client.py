@@ -4,9 +4,15 @@
 
 from __future__ import annotations
 
+import base64
+import hashlib
+import http.server
+import secrets
 import time
+import webbrowser
 from dataclasses import dataclass, field
 from typing import Any
+from urllib.parse import parse_qs, urlencode, urlparse
 
 import requests
 
@@ -58,6 +64,13 @@ class AuthClient:
         self.session.headers.update(
             {"User-Agent": "M365-TDVE/1.0 (detection-validation)"}
         )
+        # Shared delegated session for a single run. Populated once - by the
+        # device-code flow, or by a successful ROPC auth leg (e.g.
+        # auth_failure's success step) - and reused by every later module in
+        # the chain. The token is never logged.
+        self.delegated_token: str | None = None
+        self.delegated_upn: str | None = None
+        self.delegated_auth_error: str | None = None
 
     # URL helpers
     @property
@@ -232,6 +245,146 @@ class AuthClient:
             raise RuntimeError(f"device-code sign-in not completed ({err}: {detail})")
 
         raise RuntimeError("device-code sign-in timed out before a token was issued")
+
+    def exchange_code_for_token(self, client_id: str, code: str,
+                                redirect_uri: str, scope: str,
+                                code_verifier: str) -> OAuthResponse:
+        """Exchange an authorization code for a token (PKCE, public client)."""
+        return self._post_form(self.token_url, {
+            "grant_type": "authorization_code",
+            "client_id": client_id,
+            "code": code,
+            "redirect_uri": redirect_uri,
+            "scope": scope,
+            "code_verifier": code_verifier,
+        })
+
+    def authorization_code_login(self, client_id: str, redirect_uri: str,
+                                 scope: str, timeout_seconds: int = 300,
+                                 login_hint: str | None = None) -> OAuthResponse:
+        """Run the interactive authorization-code flow end to end (PKCE).
+
+        Opens a browser to the Microsoft sign-in page and starts a one-shot
+        loopback listener on ``redirect_uri`` to capture the returned code, then
+        exchanges it for a token. Unlike device code, this is an ordinary
+        interactive sign-in: the user completes MFA (e.g. approves the push), so
+        it produces the CORRECT "successful, MFA-satisfied sign-in" telemetry
+        rather than a device-code signal. ``prompt=login`` forces a fresh
+        authentication so the MFA step is actually exercised. The returned
+        response's body carries ``access_token``. Raises if the flow cannot be
+        started or does not complete.
+        """
+        # PKCE (S256) - required for a public client and good practice regardless.
+        verifier = base64.urlsafe_b64encode(secrets.token_bytes(32)).rstrip(b"=").decode()
+        challenge = base64.urlsafe_b64encode(
+            hashlib.sha256(verifier.encode()).digest()
+        ).rstrip(b"=").decode()
+        state = secrets.token_urlsafe(16)
+
+        parsed = urlparse(redirect_uri)
+        host = parsed.hostname or "localhost"
+        port = parsed.port or 80
+        cb_path = parsed.path or "/"
+
+        params = {
+            "client_id": client_id,
+            "response_type": "code",
+            "redirect_uri": redirect_uri,
+            "response_mode": "query",
+            "scope": scope,
+            "state": state,
+            "code_challenge": challenge,
+            "code_challenge_method": "S256",
+            "prompt": "login",
+        }
+        if login_hint:
+            params["login_hint"] = login_hint
+        auth_url = f"{self.authorise_url}?{urlencode(params)}"
+
+        captured: dict[str, str | None] = {}
+
+        class _Handler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):  # noqa: N802 - stdlib interface name
+                p = urlparse(self.path)
+                if p.path != cb_path:
+                    self.send_response(404)
+                    self.end_headers()
+                    return
+                qs = parse_qs(p.query)
+                captured["code"] = (qs.get("code") or [None])[0]
+                captured["state"] = (qs.get("state") or [None])[0]
+                captured["error"] = (qs.get("error") or [None])[0]
+                captured["error_description"] = (qs.get("error_description") or [None])[0]
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html")
+                self.end_headers()
+                self.wfile.write(
+                    b"<html><body style='font-family:sans-serif'>"
+                    b"<h2>M365 TDVE</h2><p>Sign-in captured. You can close this tab."
+                    b"</p></body></html>"
+                )
+
+            def log_message(self, *args):  # silence the default stderr logging
+                return
+
+        try:
+            server = http.server.HTTPServer((host, port), _Handler)
+        except OSError as exc:
+            raise RuntimeError(
+                f"cannot bind the redirect listener on {host}:{port} ({exc}); "
+                f"ensure the port is free and matches the app's registered "
+                f"redirect_uri ({redirect_uri})"
+            )
+        server.timeout = 1  # poll granularity so the deadline stays responsive
+
+        bar = "=" * 70
+        self.log.info(bar)
+        self.log.info("ACTION REQUIRED - complete the interactive sign-in to continue")
+        self.log.info("  A browser window is opening at the Microsoft sign-in page.")
+        self.log.info("  Sign in as the TEST account%s and APPROVE the MFA prompt.",
+                      f" ({login_hint})" if login_hint else "")
+        self.log.info("  If the browser did not open, paste this URL:")
+        self.log.info("    %s", auth_url)
+        self.log.info("Waiting for the redirect (up to %ds)...", timeout_seconds)
+        self.log.info(bar)
+
+        try:
+            webbrowser.open(auth_url)
+        except Exception:  # noqa: BLE001 - URL already printed as a fallback
+            pass
+
+        deadline = time.monotonic() + timeout_seconds
+        try:
+            while "code" not in captured and "error" not in captured:
+                if time.monotonic() >= deadline:
+                    break
+                server.handle_request()  # returns on a request or after server.timeout
+        finally:
+            server.server_close()
+
+        if captured.get("error"):
+            raise RuntimeError(
+                f"authorization failed "
+                f"({captured['error']}: {captured.get('error_description')})"
+            )
+        code = captured.get("code")
+        if not code:
+            raise RuntimeError(
+                "authorization-code sign-in timed out before a code was returned"
+            )
+        if captured.get("state") != state:
+            raise RuntimeError(
+                "state mismatch on the authorization response (possible CSRF); aborting"
+            )
+
+        resp = self.exchange_code_for_token(
+            client_id, code, redirect_uri, scope, verifier
+        )
+        if not resp.ok or not (resp.body or {}).get("access_token"):
+            detail = resp.error_description or resp.error or f"HTTP {resp.http_status}"
+            raise RuntimeError(f"authorization-code token exchange failed ({detail})")
+        self.log.info("  interactive sign-in complete; delegated token issued")
+        return resp
 
     def graph_get(self, url: str, access_token: str) -> OAuthResponse:
         """Authenticated GET against a resource (e.g. Graph /me).

@@ -85,6 +85,9 @@ _AUTH_FAILURE = TechniqueReference(
         "Many distinct usernames failing from one IP/ASN in a short window",
         "A low number of attempts per account (spray, not brute-force) to dodge lockout",
         "Failures against legacy auth endpoints (ROPC) that bypass modern controls",
+        "A SUCCESSFUL sign-in from the same user/IP right after the failures - "
+        "the spray has worked; treat the account as compromised and pivot to "
+        "hunting post-breach activity (rules, forwarding, consent, role changes)",
     ],
     false_positives=[
         "A misconfigured client or mobile device replaying a stale password",
@@ -185,6 +188,9 @@ _MFA_PROMPT = TechniqueReference(
         "Many MFA challenges for one user in minutes, mostly denied/timed-out",
         "A final approval right after a run of denials (the fatigue payoff)",
         "Correct password + failing second factor = password is already compromised",
+        "A SUCCESSFUL interactive sign-in satisfied by an MFA approval right after "
+        "the denial burst - the fatigue worked; treat as compromise and pivot to "
+        "hunting post-breach activity (rules, forwarding, consent, role changes)",
     ],
     false_positives=[
         "A user repeatedly retrying a flaky push on poor connectivity",

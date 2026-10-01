@@ -43,7 +43,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--tenant",             help="Override tenant (GUID or *.onmicrosoft.com domain)")
     parser.add_argument("--user",               help="Restrict targeting to a single test UPN")
     parser.add_argument("--client-id",          help="Override public client (app) ID")
-    parser.add_argument("--delegated-auth",      choices=["ropc", "device_code"], help="Delegated-token flow for post-breach modules (device_code handles MFA; default: ropc / config)")
+    parser.add_argument("--delegated-auth",      choices=["ropc", "device_code", "auth_code"], help="Delegated-token flow for post-breach modules (device_code/auth_code handle MFA; auth_code is an interactive browser sign-in; default: ropc / config)")
     parser.add_argument("--module",             choices=_MODULE_CHOICES, default="all", help="Telemetry module to run (default: all)")
     parser.add_argument("--verbose",            action="store_true", help="Enable debug-level console output")
     parser.add_argument("--version",            action="version", version=f"m365-tdve {__version__}")
