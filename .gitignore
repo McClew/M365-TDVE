@@ -5,7 +5,11 @@ config/config.json
 # Runtime artifacts
 validation_run.log
 validation_summary.json
+simulation_timeline.json
 *.log
+
+# Generated SOC training reference (produced by --emit-cards)
+training_cards/
 
 # Python
 __pycache__/

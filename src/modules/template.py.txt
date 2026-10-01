@@ -1,0 +1,54 @@
+# STARTER TEMPLATE for a new telemetry / post-exploitation module.
+#
+# This file is kept as .txt so it is NOT imported. To build a module:
+#   1. Copy it to src/modules/<your_module>.py
+#   2. Rename the class and set key / expected_event / remediation
+#      (keep them in step with the matching entry in src/training/reference.py)
+#   3. Implement run()
+#   4. Register it in src/modules/__init__.py -> MODULE_REGISTRY
+#   5. Add a `modules.<key>` block to your config for any tunables (self.settings)
+#
+# Once registered, the CLI (--module <key>), the sequence runner
+# (--sequence / --chain), the JSON summary and the console report all pick it up
+# automatically - no changes needed to cli.py or runner.py.
+#
+# For an AUTHENTICATED (post-breach) module you will also need to add, yourself:
+#   * a delegated access token - AuthClient.ropc_token(...) returns one in
+#     resp.body["access_token"] for a cloud-only test account with a valid
+#     password and no MFA interrupt;
+#   * Graph write helpers (POST/PATCH/DELETE) on AuthClient, mirroring the
+#     existing graph_get();
+#   * your safety guardrails: a test-target allowlist, a dry-run/--live switch,
+#     benign content only, and a revert path that leaves the tenant clean.
+# Get the request bodies from the Microsoft Graph REST reference
+# (learn.microsoft.com/en-us/graph/api/), and add the required delegated
+# permission to your TEST app registration.
+
+from __future__ import annotations
+
+import time
+
+from .base import ModuleResult, TelemetryModule
+
+class YourModule(TelemetryModule):
+    key = "your_module"
+    expected_event = "..."      # keep in step with src/training/reference.py
+    remediation = "..."
+
+    def run(self) -> list[ModuleResult]:
+        results: list[ModuleResult] = []
+        for user in self.config.users:          # your declared test targets
+            result = self._new_result(target_user=user.upn)
+            start = time.monotonic()
+
+            # --- implement the module's behaviour here ---
+            # For an authenticated module, the usual shape is:
+            #   1. token = self.client.ropc_token(...).body.get("access_token")
+            #   2. call Graph via your write helper to perform the benign action
+            #   3. record the outcome into result.calls / result.artifacts / result.notes
+            #   4. (recommended) undo it, and record enough to undo it later too
+            # Read tunables from self.settings (the modules.<key> config block).
+
+            result.duration_seconds = round(time.monotonic() - start, 3)
+            results.append(result)
+        return results

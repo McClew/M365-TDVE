@@ -17,6 +17,18 @@ client:
   # Redirect URI registered for the consent-URL / auth-code flows.
   redirect_uri: "http://localhost:8400/callback"
 
+# How the authenticated (post-breach) modules acquire a delegated Graph token.
+auth:
+  # ropc        -> non-interactive password grant, per-user. Silent, but CANNOT
+  #                satisfy MFA: protected accounts fail with AADSTS50076.
+  # device_code -> ONE interactive sign-in (complete MFA in a browser); the
+  #                issued token is cached and shared across every module in the
+  #                run. Use this when your test accounts enforce MFA.
+  # Override per-run with --delegated-auth {ropc,device_code}.
+  delegated_flow: ropc
+  scope: "https://graph.microsoft.com/.default offline_access"
+  device_code_timeout: 300     # max seconds to wait for the interactive sign-in
+
 # Test accounts that live in the test tenant. These are the ONLY identities the
 # engine will target.
 targets:
@@ -27,8 +39,20 @@ targets:
       # Prefer supplying this via the M365TDVE_TEST_PASSWORD env var instead.
       password: ""
 
+    # Privileged actor used by the role_assignment / mfa_registration /
+    # anonymous_sharing modules (see admin_upn in those blocks). It must live in
+    # the test tenant and carry a password here because ROPC needs one.
+    # NB: every module iterates ALL targets.users, so this account is also acted
+    # on as a target. If you would rather keep an actor separate from targets,
+    # see the design note in the module README.
+    - upn: "detection.admin@example.onmicrosoft.com"
+      password: ""
+
 # Per-module tuning. All rates are conservative by default.
 modules:
+
+# --- Initial compromise modules ---
+
   auth_failure:
     attempts: 5                 # number of deliberately-failed sign-ins
     invalid_password: "TDVE-Invalid-Telemetry-000!"  # a password known to be wrong
@@ -72,6 +96,57 @@ modules:
       - "Files.ReadWrite.All"
       - "offline_access"
     state: "tdve-consent-validation"
+
+  # --- Post-compromise modules ---
+
+  inbox_rule:
+    rule_name: "ZZ-TDVE-InboxRule"       # clearly labelled so it is easy to spot/triage
+    match_subject: "TDVE-PROBE"          # rule only matches this synthetic subject -> never touches real mail
+    cleanup: true                        # delete the rule once the event is generated
+
+  mail_forwarding:
+    rule_name: "ZZ-TDVE-Forwarding"
+    forward_to: "tdve-sink@example.invalid"  # a mailbox YOU control; off-domain exercises external-forwarding detections
+    match_subject: "TDVE-PROBE"          # gates the rule so no live mail is ever forwarded
+    cleanup: true
+
+  password_change:
+    # Current password is taken from the target's own credential
+    # (targets.users[].password / M365TDVE_TEST_PASSWORD); set only new_password.
+    # NOTE: this really rotates the test account - update the stored credential
+    # to new_password before the next run.
+    new_password: ""                     # e.g. "TDVE-Rotated-000!"
+
+  mfa_registration:
+    # admin_upn must be one of targets.users (that is where ROPC passwords live)
+    # and hold Authentication Administrator. Leave blank to use the per-user
+    # token (will usually 403 - self-service method management is restricted).
+    admin_upn: "detection.admin@example.onmicrosoft.com"
+    test_phone_number: "+1 2065550100"   # reserved test range; added then removed
+    reset_existing: false                # true = also delete pre-existing methods (throwaway accounts only)
+    cleanup: true
+
+  role_assignment:
+    admin_upn: "detection.admin@example.onmicrosoft.com"  # needs Privileged Role Administrator
+    role_display_name: "Directory Readers"  # low-impact role, resolved by name (not a hard-coded GUID)
+    cleanup: true
+
+  anonymous_sharing:
+    admin_upn: "detection.admin@example.onmicrosoft.com"  # owns the sandbox item below
+    drive_id: ""                         # a sandbox drive you control
+    item_id: ""                          # a sandbox item (e.g. a dummy "evidence" folder)
+    link_type: "view"                    # view | edit
+    expiration_datetime: ""              # optional ISO-8601, e.g. 2026-10-08T23:59:59Z
+    link_password: ""                    # optional password on the link
+    cleanup: true                        # revoke the link once the event is generated
+
+# --- Other settings ---
+
+  # SOC training / detection-reference layer. These outputs are generated with
+  # `--emit-cards` and never contact the tenant.
+training:
+  # Where the attack reference cards + scenario timelines are written.
+  cards_dir: "training_cards"
 
 output:
   log_file: "validation_run.log"

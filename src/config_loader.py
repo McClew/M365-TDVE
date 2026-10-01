@@ -32,12 +32,34 @@ class TargetUser:
     password: str = ""
 
 @dataclass
+class TrainingConfig:
+    """Settings for the SOC training / detection-reference layer."""
+    # Output directory for the generated attack reference cards + scenarios.
+    cards_dir: str = "training_cards"
+
+@dataclass
+class AuthConfig:
+    """How the authenticated (post-breach) modules acquire a delegated token.
+
+    ``ropc`` (default) uses the non-interactive password grant - silent and
+    per-user, but it CANNOT satisfy MFA (fails with AADSTS50076 on protected
+    accounts). ``device_code`` runs one interactive sign-in (complete MFA in a
+    browser); the issued token is cached and shared across every module in the
+    run.
+    """
+    delegated_flow: str = "ropc"   # ropc | device_code
+    scope: str = "https://graph.microsoft.com/.default offline_access"
+    device_code_timeout: int = 300
+
+@dataclass
 class EngineConfig:
     tenant: str # GUID or domain, as declared
     client_id: str
     redirect_uri: str
     users: list[TargetUser]
     modules: dict[str, Any]
+    auth: AuthConfig = field(default_factory=AuthConfig)
+    training: TrainingConfig = field(default_factory=TrainingConfig)
     log_file: str = "validation_run.log"
     summary_json: str = "validation_summary.json"
     raw: dict[str, Any] = field(default_factory=dict)
@@ -142,12 +164,36 @@ def load_config(path: str | Path, cli_overrides: dict[str, Any] | None = None) -
 
     output_block = data.get("output") or {}
 
+    # Delegated-auth settings for the post-breach modules. A CLI override wins
+    # over the file, which wins over the ROPC default.
+    a = data.get("auth") or {}
+    auth = AuthConfig()
+    flow = (cli_overrides.get("delegated_auth")
+            or a.get("delegated_flow") or auth.delegated_flow).strip().lower()
+    if flow not in ("ropc", "device_code"):
+        raise ConfigError(
+            f"auth.delegated_flow must be 'ropc' or 'device_code', got {flow!r}"
+        )
+    auth.delegated_flow = flow
+    if a.get("scope"):
+        auth.scope = str(a["scope"]).strip()
+    if a.get("device_code_timeout"):
+        auth.device_code_timeout = int(a["device_code_timeout"])
+
+    # Training / detection-reference settings.
+    t = data.get("training") or {}
+    training = TrainingConfig(
+        cards_dir=(t.get("cards_dir") or "training_cards").strip(),
+    )
+
     return EngineConfig(
         tenant=tenant,
         client_id=client_id,
         redirect_uri=redirect_uri,
         users=users,
         modules=data.get("modules") or {},
+        auth=auth,
+        training=training,
         log_file=output_block.get("log_file") or "validation_run.log",
         summary_json=output_block.get("summary_json") or "validation_summary.json",
         raw=data,

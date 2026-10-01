@@ -1,4 +1,4 @@
-# Authentication-failure telemetry.
+# Authentication-failure telemetry
 # 
 # Sends controlled, rate-limited ROPC requests using a DELIBERATELY INVALID
 # password against declared test accounts to produce Entra sign-in failure
